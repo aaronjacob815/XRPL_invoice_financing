@@ -20,20 +20,20 @@ company = generate_faucet_wallet(client, debug = True)
 company_account = company.classic_address
 print(f" https://testnet.xrpl.org/accounts/{company_account}") #to get account testnet explorer url
 
-# Bitmasks, so I'm ORing each. Switches on a token's permissions. Immutable after creation. Clawback allows issuer to take back?
+# Bitmasks, so I'm ORing each. Switches on a token's permissions. Immutable after creation.
 INVOICE_FLAGS = (
     MPTokenIssuanceCreateFlag.TF_MPT_CAN_TRANSFER
     | MPTokenIssuanceCreateFlag.TF_MPT_CAN_TRADE
-    | MPTokenIssuanceCreateFlag.TF_MPT_CAN_CLAWBACK
 )
 
 # Metadata for an example token, note that it can't be updated after creation, and is all publicly visible. NOT FINALISED.
+# Does result in warnings, but warnings are stablecoin oriented - I think these attributes are all our token needs.
 mpt_metadata = {
-  "schema": "invoice/v1",
+  "schema": "invoice/v1",      # version tag, incase we end up making v2!
   "invoice_id": "INV-2026-0001",
   "debtor":    "rCompany...",
   "payee":     "rFreelancer...",
-  "face_value": 2000,
+  "face_value": 2000,      # example price
   "currency":  "RLUSD",
   "issue_date":"2026-06-14",
   "due_date":  "2026-07-14",
