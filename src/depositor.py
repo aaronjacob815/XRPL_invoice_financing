@@ -1,10 +1,11 @@
-from xrpl.clients import JsonRpcClient
-from xrpl.wallet import Wallet, generate_faucet_wallet
+from xrpl.wallet import generate_faucet_wallet
+from xrpl.models import VaultDeposit
 from xrpl.models.requests import AccountInfo
+from xrpl.transaction import submit_and_wait
 from xrpl.utils import xrp_to_drops
 
-JSON_RPC_URL = "https://s.devnet.rippletest.net:51234"
-client = JsonRpcClient(JSON_RPC_URL)
+from demo_config import client, DEVNET
+from utils import require_success
 
 
 def create_depositor(funding_xrp: float = 1000.0) -> dict:
@@ -23,7 +24,7 @@ def create_depositor(funding_xrp: float = 1000.0) -> dict:
     print(f"\nDepositor account created:")
     print(f"  Address : {wallet.classic_address}")
     print(f"  Balance : {actual_balance_xrp:.2f} XRP")
-    print(f"  Explorer: https://testnet.xrpl.org/accounts/{wallet.classic_address}")
+    print(f"  Explorer: https://devnet.xrpl.org/accounts/{wallet.classic_address}")
 
     return {
         "wallet": wallet,
@@ -31,6 +32,20 @@ def create_depositor(funding_xrp: float = 1000.0) -> dict:
         "balance_xrp": actual_balance_xrp,
         "balance_drops": actual_balance_drops,
     }
+
+def deposit_into_vault(depositor: dict, vault_id: str, amount_xrp: float):
+    """Sends XRP from a depositor into the vault; depositor receives vault share MPTs."""
+    print(f"  {depositor['address']}  →  {amount_xrp} XRP")
+
+    tx = VaultDeposit(
+        account=depositor["address"],
+        vault_id=vault_id,
+        amount=xrp_to_drops(amount_xrp),
+    )
+    response = submit_and_wait(tx, client, depositor["wallet"], autofill=True)
+    require_success(response, "VaultDeposit")
+
+    print(f"    tx: {DEVNET}/transactions/{response.result['hash']}")
 
 
 if __name__ == "__main__":

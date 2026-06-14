@@ -1,24 +1,21 @@
-from xrpl.clients import JsonRpcClient
+import json
+
 from xrpl.utils import encode_mptoken_metadata, decode_mptoken_metadata
 from xrpl.models.transactions import (
     MPTokenIssuanceCreate,
     MPTokenIssuanceCreateFlag
 )
 from xrpl.transaction import submit_and_wait
-from xrpl.wallet import Wallet, generate_faucet_wallet
-from xrpl.core import addresscodec
+from xrpl.wallet import generate_faucet_wallet
 from xrpl.models.requests.account_info import AccountInfo
-import json
 
-# Connection to testnet ledger
-JSON_RPC_URL = "https://s.altnet.rippletest.net:51234/"
-client = JsonRpcClient(JSON_RPC_URL)
+from demo_config import client
 
 # Get account w money from faucet
 print("\nMaking wallet to simulate company: \n")
 company = generate_faucet_wallet(client, debug = True)
 company_account = company.classic_address
-print(f" https://testnet.xrpl.org/accounts/{company_account}") #to get account testnet explorer url
+print(f" https://devnet.xrpl.org/accounts/{company_account}") #to get account testnet explorer url
 
 # Bitmasks, so I'm ORing each. Switches on a token's permissions. Immutable after creation.
 INVOICE_FLAGS = (
@@ -63,4 +60,4 @@ if result_code != "tesSUCCESS":
 
 issuance_id = response.result["meta"]["mpt_issuance_id"]
 print(f"\n- MPToken created successfully with issuance ID: {issuance_id}")
-print(f"- Explorer URL: https://testnet.xrpl.org/mpt/{issuance_id}")
+print(f"- Explorer URL: https://devnet.xrpl.org/mpt/{issuance_id}")
