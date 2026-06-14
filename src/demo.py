@@ -138,42 +138,81 @@ if __name__ == "__main__":
     transfer_invoice_to_freelancer(company_wallet, freelancer_wallet, mpt_id)
 
     # ── STEP 7: MARKETPLACE SWAP ─────────────────────────────────────────────
+    # ── PAUSE DEMO FOR LIVE INTERACTION ─────────────────────────────────────
     print("\n" + "="*50)
-    print("STEP 7: MARKETPLACE SWAP")
+    print("DEMO PAUSED: READY FOR MARKETPLACE NEGOTIATION")
     print("="*50)
 
-    broker_authorize_token(broker_wallet, mpt_id)
-    print(f"DEBUG issuer_wallet address: {issuer_wallet.classic_address}")
-    freelancer_sells_to_broker(
-        freelancer_wallet=freelancer_wallet,
-        broker_wallet=broker_wallet,
-        mpt_issuance_id=mpt_id,
-        face_value=FACE_VALUE,
-        issuer_address=issuer_wallet.classic_address,
-        discount_pct=DISCOUNT_PCT
-    )
+    # 1. Ask for dynamic discount rate
+    while True:
+        try:
+            user_input = input(f"\n[DEMO] Enter Interest rate (e.g., 5 for 5%): ").strip()
+            dynamic_rate = float(user_input)
+            if 0 <= dynamic_rate <= 100:
+                break
+            else:
+                print("Please enter a valid percentage between 0 and 100.")
+        except ValueError:
+            print("Invalid input. Please enter a number.")
 
-    # ── STEP 8: COMPANY PAYS BROKER AT MATURITY ─────────────────────────────
-    print("\n" + "="*50)
-    print("STEP 8: COMPANY PAYS BROKER AT MATURITY")
-    print("="*50)
+    dynamic_discount_pct = dynamic_rate / 100.0
+    payout_amount = FACE_VALUE * (1 - dynamic_discount_pct)
+    profit_amount = FACE_VALUE * dynamic_discount_pct
 
-    company_pays_broker(
-        company_wallet=company_wallet,
-        broker_wallet=broker_wallet,
-        issuer_address=issuer_wallet.classic_address,
-        face_value=FACE_VALUE
-    )
+    # 2. Show the deal terms
+    print("\n--- Proposed Deal Summary ---")
+    print(f"  Invoice Face Value : {FACE_VALUE} RLUSD")
+    print(f"  Interest Rate      : {dynamic_rate}%")
+    print(f"  Freelancer Gets    : {payout_amount} RLUSD instantly")
+    print(f"  Broker Profit      : {profit_amount} RLUSD at maturity")
 
-    # ── SUMMARY ──────────────────────────────────────────────────────────────
-    print("\n" + "="*50)
-    print("DEMO COMPLETE — SUMMARY")
-    print("="*50)
-    print(f"\n  Vault      : {DEVNET}/ledger-objects/{vault['vault_id']}")
-    print(f"  Broker     : {DEVNET}/accounts/{broker_wallet.classic_address}")
-    print(f"  Company    : {DEVNET}/accounts/{company_wallet.classic_address}")
-    print(f"  Freelancer : {DEVNET}/accounts/{freelancer_wallet.classic_address}")
-    print(f"  Invoice    : {DEVNET}/mpt/{mpt_id}")
-    print(f"\n  Freelancer received : {FACE_VALUE * (1 - DISCOUNT_PCT)} RLUSD instantly")
-    print(f"  Broker profit       : {FACE_VALUE * DISCOUNT_PCT} RLUSD")
-    print(f"  Invoice settled     : {FACE_VALUE} RLUSD")
+    # 3. Confirm the deal
+    confirm = input("\n[DEMO] Does the Freelancer accept this deal? (Y/N): ").strip().upper()
+
+    if confirm == 'Y':
+        # ── STEP 7: MARKETPLACE SWAP ─────────────────────────────────────────────
+        print("\n" + "="*50)
+        print("STEP 7: EXECUTING MARKETPLACE SWAP")
+        print("="*50)
+
+        broker_authorize_token(broker_wallet, mpt_id)
+
+        freelancer_sells_to_broker(
+            freelancer_wallet=freelancer_wallet,
+            broker_wallet=broker_wallet,
+            mpt_issuance_id=mpt_id,
+            face_value=FACE_VALUE,
+            issuer_address=issuer_wallet.classic_address,
+            discount_pct=dynamic_discount_pct  # Using the live input here!
+        )
+
+        # ── STEP 8: COMPANY PAYS BROKER AT MATURITY ─────────────────────────────
+        print("\n" + "="*50)
+        print("STEP 8: FAST FORWARD TO MATURITY")
+        print("="*50)
+
+        # Add a dramatic pause for the presentation
+        input("\n[DEMO] Press ENTER to simulate 90 days passing and the Company settling the invoice...")
+
+        company_pays_broker(
+            company_wallet=company_wallet,
+            broker_wallet=broker_wallet,
+            issuer_address=issuer_wallet.classic_address,
+            face_value=FACE_VALUE
+        )
+
+        # ── SUMMARY ──────────────────────────────────────────────────────────────
+        print("\n" + "="*50)
+        print("DEMO COMPLETE — FINAL SUMMARY")
+        print("="*50)
+        print(f"\n  Vault      : {DEVNET}/ledger-objects/{vault['vault_id']}")
+        print(f"  Broker     : {DEVNET}/accounts/{broker_wallet.classic_address}")
+        print(f"  Company    : {DEVNET}/accounts/{company_wallet.classic_address}")
+        print(f"  Freelancer : {DEVNET}/accounts/{freelancer_wallet.classic_address}")
+        print(f"  Invoice    : {DEVNET}/mpt/{mpt_id}")
+        print(f"\n  Freelancer received : {payout_amount} RLUSD instantly")
+        print(f"  Broker profit       : {profit_amount} RLUSD")
+        print(f"  Invoice settled     : {FACE_VALUE} RLUSD")
+
+    else:
+        print("\n[DEMO] Deal rejected by Freelancer. Terminating script.")
