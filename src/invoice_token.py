@@ -1,63 +1,98 @@
-import json
-
-from xrpl.utils import encode_mptoken_metadata, decode_mptoken_metadata
+from xrpl.utils import encode_mptoken_metadata
 from xrpl.models.transactions import (
     MPTokenIssuanceCreate,
     MPTokenIssuanceCreateFlag
 )
 from xrpl.transaction import submit_and_wait
 from xrpl.wallet import generate_faucet_wallet
-from xrpl.models.requests.account_info import AccountInfo
 
-from demo_config import client
+from demo_config import client, DEVNET
+from utils import require_success
 
-# Get account w money from faucet
-print("\nMaking wallet to simulate company: \n")
-company = generate_faucet_wallet(client, debug = True)
-company_account = company.classic_address
-print(f" https://devnet.xrpl.org/accounts/{company_account}") #to get account testnet explorer url
 
-# Bitmasks, so I'm ORing each. Switches on a token's permissions. Immutable after creation.
+# Bitmasks for token permissions — immutable after creation
 INVOICE_FLAGS = (
     MPTokenIssuanceCreateFlag.TF_MPT_CAN_TRANSFER
     | MPTokenIssuanceCreateFlag.TF_MPT_CAN_TRADE
 )
 
-# Metadata for an example token, note that it can't be updated after creation, and is all publicly visible. NOT FINALISED.
-# Does result in warnings, but warnings are stablecoin oriented - I think these attributes are all our token needs.
-mpt_metadata = {
-  "schema": "invoice/v1",      # version tag, incase we end up making v2!
-  "invoice_id": "INV-2026-0001",
-  "debtor":    "rCompany...",
-  "payee":     "rFreelancer...",
-  "face_value": 2000,      # example price
-  "currency":  "RLUSD",
-  "issue_date":"2026-06-14",
-  "due_date":  "2026-07-14",
-  "asset_class": "rwa"     # real world asset
+
+def create_invoice(company_wallet, invoice_data: dict) -> str:
+    """
+    Company mints an MPToken representing an unpaid invoice.
+
+    invoice_data = {
+        "invoice_id":  "INV-2026-0001",
+        "face_value":  10000,
+        "currency":    "RLUSD",
+        "due_date":    "2026-09-01",
+        "description": "Web development services"
+    }
+
+    Returns the mpt_issuance_id string.
+    """
+    print(f"\n=== Company minting invoice token ===")
+    print(f"  Company  : {company_wallet.classic_address}")
+    print(f"  Invoice  : {invoice_data['invoice_id']}")
+    print(f"  Value    : {invoice_data['face_value']} {invoice_data['currency']}")
+    print(f"  Due date : {invoice_data['due_date']}")
+
+    # Build metadata — publicly visible on chain
+    mpt_metadata = {
+    "schema":       "invoice/v1",
+    "n":            f"Invoice {invoice_data['invoice_id']}",  # name
+    "t":            "INV",                                     # ticker
+    "i":            "https://ukfinnovators.com/icon.png",      # icon
+    "in":           "UKFinnovators Platform",                  # issuer_name
+    "as":           "invoice",                                 # asset_subclass
+    "invoice_id":   invoice_data["invoice_id"],
+    "debtor":       company_wallet.classic_address,
+    "face_value":   invoice_data["face_value"],
+    "currency":     invoice_data["currency"],
+    "issue_date":   invoice_data.get("issue_date", "2026-06-14"),
+    "due_date":     invoice_data["due_date"],
+    "description":  invoice_data.get("description", ""),
+    "asset_class":  "rwa"
 }
+    tx = MPTokenIssuanceCreate(
+        account=company_wallet.classic_address,
+        asset_scale=0,        # 1 unit = 1 whole invoice claim
+        maximum_amount="1",   # only 1 invoice token ever exists
+        transfer_fee=0,       # no cut on transfers
+        flags=INVOICE_FLAGS,
+        mptoken_metadata=encode_mptoken_metadata(mpt_metadata),
+    )
 
-# Token fields
-mpt_issuance_create = MPTokenIssuanceCreate(
-    account=company.classic_address,   # WHO issues = the debtor company
-    asset_scale=0,                     # decimal places: 0 → 1 unit = 1 whole RLUSD of claim
-    maximum_amount="1",             # total units that can exist. Change to 2000 if we extend to make invoices divisible!
-    transfer_fee=0,                    # issuer doesn't skim a cut on transfers
-    flags = INVOICE_FLAGS,                      # the token's permanent permissions (below)
-    mptoken_metadata = encode_mptoken_metadata(mpt_metadata),            # the invoice details, as hex-encoded JSON
-)
+    print("\nSubmitting MPTokenIssuanceCreate...")
+    response = submit_and_wait(tx, client, company_wallet, autofill=True)
+    require_success(response, "MPTokenIssuanceCreate")
 
-# Sign and submit the transaction
-print("\n=== Sending MPTokenIssuanceCreate transaction...===")
-response = submit_and_wait(mpt_issuance_create, client, company, autofill=True)
+    issuance_id = response.result["meta"]["mpt_issuance_id"]
 
-# Check if it worked
-print("\n=== Checking MPTokenIssuanceCreate results... ===")
-result_code = response.result["meta"]["TransactionResult"]
-if result_code != "tesSUCCESS":
-    print(f"Transaction failed with result code {result_code}.")
-    exit(1)
+    print(f"\nInvoice token created successfully :: ")
+    print(f"  MPTokenIssuanceID : {issuance_id}")
+    print(f"  Explorer          : {DEVNET}/mpt/{issuance_id}")
 
-issuance_id = response.result["meta"]["mpt_issuance_id"]
-print(f"\n- MPToken created successfully with issuance ID: {issuance_id}")
-print(f"- Explorer URL: https://devnet.xrpl.org/mpt/{issuance_id}")
+    return issuance_id
+
+
+# ── Standalone test ──────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    print("Creating company wallet...")
+    company = generate_faucet_wallet(client, debug=True)
+    print(f"Company Address : {company.classic_address}")
+    print(f"Company Seed    : {company.seed}")  # ADD THIS LINE
+    print(f"Explorer: {DEVNET}/accounts/{company.classic_address}")
+
+    invoice_data = {
+        "invoice_id":  "INV-2026-0001",
+        "face_value":  10000,
+        "currency":    "RLUSD",
+        "issue_date":  "2026-06-14",
+        "due_date":    "2026-09-01",
+        "description": "Web development services - UKFinnovator project"
+    }
+
+    mpt_id = create_invoice(company, invoice_data)
+    print(f"\nMPTokenIssuanceID: {mpt_id}")
+    print(f"Company seed: {company.seed}")  # AND THIS LINE

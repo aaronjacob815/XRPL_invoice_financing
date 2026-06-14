@@ -1,26 +1,46 @@
 from xrpl.wallet import generate_faucet_wallet
+from xrpl.models.transactions import Payment, TrustSet
+from xrpl.models.amounts import IssuedCurrencyAmount
+from xrpl.transaction import submit_and_wait
+from xrpl.models.transactions import Payment, TrustSet, AccountSet, AccountSetAsfFlag
 
 from demo_config import client, DEVNET
+from utils import require_success
 from vault import create_xrp_vault
 from loan_broker import setup_loan_broker
-from loan import issue_loan, repay_loan
 from depositor import create_depositor, deposit_into_vault
+from invoice_token import create_invoice
+from transfer import transfer_invoice_to_freelancer
+from marketplace import (
+    broker_authorize_token,
+    freelancer_sells_to_broker,
+    company_pays_broker
+)
+
+RLUSD_CURRENCY = "524C555344000000000000000000000000000000"
+FACE_VALUE     = 10000
+DISCOUNT_PCT   = 0.05
 
 
 if __name__ == "__main__":
-    # TODO: Fix URLs
 
-    # 1. Broker wallet owns and operates the vault
-    print("=== Creating broker wallet ===")
-    broker_wallet = generate_faucet_wallet(client, debug=True)
-    print(f"Broker: {broker_wallet.address}")
+    # ── STEP 1: BROKER CREATES VAULT ────────────────────────────────────────
+    print("\n" + "="*50)
+    print("STEP 1: BROKER CREATES VAULT")
+    print("="*50)
 
-    # 2. Create the SAV and register the loan broker
-    vault = create_xrp_vault(broker_wallet)
+    broker_wallet = generate_faucet_wallet(client, debug=False)
+    print(f"  Broker   : {broker_wallet.classic_address}")
+    print(f"  Explorer : {DEVNET}/accounts/{broker_wallet.classic_address}")
+
+    vault     = create_xrp_vault(broker_wallet)
     broker_id = setup_loan_broker(broker_wallet, vault["vault_id"])
 
-    # 3. Fund the vault with multiple depositors
-    print("\n=== Depositors funding vault ===")
+    # ── STEP 2: DEPOSITORS FUND VAULT ───────────────────────────────────────
+    print("\n" + "="*50)
+    print("STEP 2: DEPOSITORS FUND VAULT")
+    print("="*50)
+
     depositor_configs = [
         {"name": "Alice",   "deposit_xrp": 20.0},
         {"name": "Bob",     "deposit_xrp": 35.0},
@@ -32,18 +52,128 @@ if __name__ == "__main__":
         d["name"] = cfg["name"]
         deposit_into_vault(d, vault["vault_id"], cfg["deposit_xrp"])
 
-    # 4. Borrower (e.g., a company with an invoice) takes a loan
-    print("\n=== Borrower taking loan ===")
-    borrower_wallet = generate_faucet_wallet(client, debug=True)
-    print(f"Borrower: {borrower_wallet.address}")
+    # ── STEP 3: CREATE COMPANY + FREELANCER ─────────────────────────────────
+    print("\n" + "="*50)
+    print("STEP 3: CREATING COMPANY + FREELANCER")
+    print("="*50)
 
-    loan_id = issue_loan(broker_id, broker_wallet, borrower_wallet, principal_xrp=70.0)
+    company_wallet = generate_faucet_wallet(client, debug=False)
+    print(f"  Company    : {company_wallet.classic_address}")
 
-    # 5. Borrower repays
-    print("\n=== Repayment ===")
-    repay_loan(loan_id, borrower_wallet, amount_xrp=70.0)
+    freelancer_wallet = generate_faucet_wallet(client, debug=False)
+    print(f"  Freelancer : {freelancer_wallet.classic_address}")
 
-    print("\n=== Summary ===")
-    print(f"Vault   : {DEVNET}/vault/{vault['vault_id']}")
-    print(f"Broker  : {DEVNET}/account/{broker_id}")
-    print(f"Loan    : {DEVNET}/ledger-objects/{loan_id}")
+    # ── STEP 4: MINT RLUSD ──────────────────────────────────────────────────
+    print("\n" + "="*50)
+    print("STEP 4: MINTING RLUSD")
+    print("="*50)
+
+    issuer_wallet = generate_faucet_wallet(client, debug=False)
+    print(f"  Issuer : {issuer_wallet.classic_address}")
+
+    # --- Enable Default Ripple on the Issuer ---
+    print("\nEnabling Default Ripple on Issuer...")
+    r_ripple = submit_and_wait(AccountSet(
+        account=issuer_wallet.classic_address,
+        set_flag=AccountSetAsfFlag.ASF_DEFAULT_RIPPLE
+    ), client, issuer_wallet, autofill=True)
+    require_success(r_ripple, "AccountSet Default Ripple")
+    print("  ✅ Issuer rippling enabled")
+    # -----------------------------------------------------
+
+    # Set trust lines for ALL parties including freelancer
+    for wallet, name in [
+        (company_wallet,    "Company"),
+        (freelancer_wallet, "Freelancer"),
+        (broker_wallet,     "Broker"),
+    ]:
+        r = submit_and_wait(TrustSet(
+            account=wallet.classic_address,
+            limit_amount=IssuedCurrencyAmount(
+                currency=RLUSD_CURRENCY,
+                issuer=issuer_wallet.classic_address,
+                value="1000000"
+            )
+        ), client, wallet, autofill=True)
+        require_success(r, f"TrustSet {name}")
+        print(f"  ✅ {name} trust line set")
+
+    # Mint RLUSD to broker and company only
+    for wallet, name, amount in [
+        (broker_wallet,  "Broker",  10000),
+        (company_wallet, "Company", 10000),
+    ]:
+        r = submit_and_wait(Payment(
+            account=issuer_wallet.classic_address,
+            destination=wallet.classic_address,
+            amount=IssuedCurrencyAmount(
+                currency=RLUSD_CURRENCY,
+                issuer=issuer_wallet.classic_address,
+                value=str(amount)
+            )
+        ), client, issuer_wallet, autofill=True)
+        require_success(r, f"Mint RLUSD to {name}")
+        print(f"  ✅ {name} funded with {amount} RLUSD")
+
+    # ── STEP 5: COMPANY MINTS INVOICE TOKEN ─────────────────────────────────
+    print("\n" + "="*50)
+    print("STEP 5: COMPANY MINTS INVOICE TOKEN")
+    print("="*50)
+
+    invoice_data = {
+        "invoice_id":  "INV-2026-0001",
+        "face_value":  FACE_VALUE,
+        "currency":    "RLUSD",
+        "issue_date":  "2026-06-14",
+        "due_date":    "2026-09-01",
+        "description": "Web development services"
+    }
+    mpt_id = create_invoice(company_wallet, invoice_data)
+
+    # ── STEP 6: TRANSFER TOKEN TO FREELANCER ────────────────────────────────
+    print("\n" + "="*50)
+    print("STEP 6: INVOICE TOKEN SENT TO FREELANCER")
+    print("="*50)
+
+    transfer_invoice_to_freelancer(company_wallet, freelancer_wallet, mpt_id)
+
+    # ── STEP 7: MARKETPLACE SWAP ─────────────────────────────────────────────
+    print("\n" + "="*50)
+    print("STEP 7: MARKETPLACE SWAP")
+    print("="*50)
+
+    broker_authorize_token(broker_wallet, mpt_id)
+    print(f"DEBUG issuer_wallet address: {issuer_wallet.classic_address}")
+    freelancer_sells_to_broker(
+        freelancer_wallet=freelancer_wallet,
+        broker_wallet=broker_wallet,
+        mpt_issuance_id=mpt_id,
+        face_value=FACE_VALUE,
+        issuer_address=issuer_wallet.classic_address,
+        discount_pct=DISCOUNT_PCT
+    )
+
+    # ── STEP 8: COMPANY PAYS BROKER AT MATURITY ─────────────────────────────
+    print("\n" + "="*50)
+    print("STEP 8: COMPANY PAYS BROKER AT MATURITY")
+    print("="*50)
+
+    company_pays_broker(
+        company_wallet=company_wallet,
+        broker_wallet=broker_wallet,
+        issuer_address=issuer_wallet.classic_address,
+        face_value=FACE_VALUE
+    )
+
+    # ── SUMMARY ──────────────────────────────────────────────────────────────
+    print("\n" + "="*50)
+    print("DEMO COMPLETE — SUMMARY")
+    print("="*50)
+    print(f"\n  Vault      : {DEVNET}/ledger-objects/{vault['vault_id']}")
+    print(f"  Broker     : {DEVNET}/accounts/{broker_wallet.classic_address}")
+    print(f"  Company    : {DEVNET}/accounts/{company_wallet.classic_address}")
+    print(f"  Freelancer : {DEVNET}/accounts/{freelancer_wallet.classic_address}")
+    print(f"  Invoice    : {DEVNET}/mpt/{mpt_id}")
+    print(f"\n  Freelancer received : {FACE_VALUE * (1 - DISCOUNT_PCT)} RLUSD instantly")
+    print(f"  Broker profit       : {FACE_VALUE * DISCOUNT_PCT} RLUSD")
+    print(f"  Invoice settled     : {FACE_VALUE} RLUSD")
